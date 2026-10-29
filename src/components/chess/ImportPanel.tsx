@@ -124,7 +124,7 @@ export function ImportPanel({
                 <input
                   value={username}
                   onChange={(e) => setUsername(e.target.value)}
-                  placeholder={`${tab === "chesscom" ? "Chess.com" : "Lichess"} username`}
+                  placeholder={`${tab === "chesscom" ? "chess.com" : "Lichess"} username (ex. MdNafimMuttaki)`}
                   className="h-10 flex-1 rounded-md border border-input bg-background px-3 text-sm outline-none focus:border-primary"
                 />
                 <button className="btn-primary" disabled={loading}>
