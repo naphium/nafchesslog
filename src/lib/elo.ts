@@ -3,14 +3,13 @@ import type { Classification } from "./analysis";
 // Accuracy -> rating anchor points (piecewise linear).
 const ANCHORS: [number, number][] = [
   [0, 400],
-  [50, 600],
-  [65, 1000],
-  [75, 1350],
-  [82, 1650],
-  [88, 2000],
-  [93, 2350],
-  [97, 2700],
-  [100, 3000],
+  [45, 600],
+  [60, 1000],
+  [70, 1500],
+  [80, 2000],
+  [90, 2500],
+  [95, 2800],
+  [100, 3100],
 ];
 
 export function accuracyToElo(acc: number): number {
@@ -43,8 +42,8 @@ export function estimateElo(input: {
   const inacc = counts.inaccuracy ?? 0;
 
   const accElo = accuracyToElo(accuracy);
-  const acplElo = Math.max(400, Math.min(3000, 3100 - 28 * Math.min(acpl, 95)));
-  const ratioAdj = (top / n - 0.5) * 500 - (blunders / n) * 1200 - (mistakes / n) * 500 - (inacc / n) * 200;
+  const acplElo = Math.max(400, Math.min(3000, 3000 - 18 * Math.min(acpl, 140)));
+  const ratioAdj = (top / n - 0.5) * 300 - (blunders / n) * 900 - (mistakes / n) * 250 - (inacc / n) * 100;
 
   const raw = 0.55 * accElo + 0.45 * acplElo + ratioAdj;
   const weight = Math.min(1, n / 25);

@@ -241,8 +241,8 @@ export function Analyzer() {
                         {p && <span title="Estimate confidence">{p.confidence}</span>}
                       </div>
                       <div className="mt-1 flex items-baseline gap-2">
-                        <span className="font-display text-2xl font-bold text-primary">{p ? `~${p.elo}` : "…"}</span>
-                        {diff !== null && (
+                        <span className="font-display text-2xl font-bold text-primary">{p && done >= total ? `~${p.elo}` : "…"}</span>
+                        {diff !== null && done >= total && (
                           <span className={`font-mono text-xs ${diff >= 0 ? "text-cls-best" : "text-cls-blunder"}`}>
                             {diff >= 0 ? "+" : ""}
                             {diff}
