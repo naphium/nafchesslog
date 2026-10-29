@@ -6,6 +6,10 @@ import { classifyMove, CLASS_META, formatScore, parsePgn, type Classification, t
 import { playMoveSound } from "@/lib/sounds";
 import { EvalBar } from "./EvalBar";
 import { ClassBadge } from "./Badge";
+import { ImportPanel } from "./ImportPanel";
+import { fetchChessComAvatars, type GameSummary, type PlayerMeta } from "@/lib/importers";
+import { setLastPgn } from "@/lib/recent";
+import { estimateElo } from "@/lib/elo";
 
 const Board = lazy(() => import("./Board"));
 
@@ -25,7 +29,7 @@ const SAMPLE = `[Event "Casual Game"]
 type MoveInfo = { cls: Classification; loss: number; accuracy: number };
 
 export function Analyzer() {
-  const [pgn, setPgn] = useState("");
+  const [meta, setMeta] = useState<PlayerMeta>({});
   const [error, setError] = useState<string | null>(null);
   const [game, setGame] = useState<ParsedGame | null>(null);
   const [ply, setPly] = useState(0);
@@ -45,7 +49,7 @@ export function Analyzer() {
     return () => e.terminate();
   }, []);
 
-  const review = async (text = pgn) => {
+  const review = async (text: string, source?: GameSummary) => {
     setError(null);
     let g: ParsedGame;
     try {
@@ -55,6 +59,13 @@ export function Analyzer() {
       return;
     }
     setGame(g);
+    setLastPgn(text);
+    setMeta({});
+    const plat = source?.platform ?? (/chess\.com/i.test(g.headers.Site ?? "") ? "chesscom" : /lichess/i.test(g.headers.Site ?? "") ? "lichess" : undefined);
+    if (plat === "chesscom" && g.headers.White && g.headers.Black)
+      fetchChessComAvatars(g.headers.White, g.headers.Black).then(setMeta);
+    else if (plat) setMeta({ platform: plat });
+    if (source) setOrientation(source.userColor === "w" ? "white" : "black");
     setPly(0);
     setEvals([]);
     setInputOpen(false);
@@ -78,17 +89,23 @@ export function Analyzer() {
 
   const summary = useMemo(() => {
     const s = {
-      w: { acc: [] as number[], counts: {} as Record<string, number> },
-      b: { acc: [] as number[], counts: {} as Record<string, number> },
+      w: { acc: [] as number[], loss: [] as number[], counts: {} as Record<string, number> },
+      b: { acc: [] as number[], loss: [] as number[], counts: {} as Record<string, number> },
     };
     game?.moves.forEach((m, i) => {
       const inf = infos[i];
       if (!inf) return;
       s[m.color].acc.push(inf.accuracy);
+      s[m.color].loss.push(Math.min(inf.loss, 1000));
       s[m.color].counts[inf.cls] = (s[m.color].counts[inf.cls] ?? 0) + 1;
     });
     const avg = (a: number[]) => (a.length ? a.reduce((x, y) => x + y, 0) / a.length : null);
-    return { w: { ...s.w, avg: avg(s.w.acc) }, b: { ...s.b, avg: avg(s.b.acc) } };
+    const fin = (x: typeof s.w) => {
+      const a = avg(x.acc);
+      const perf = a === null ? null : estimateElo({ accuracy: a, acpl: avg(x.loss) ?? 0, counts: x.counts, moves: x.acc.length });
+      return { ...x, avg: a, acpl: avg(x.loss), perf };
+    };
+    return { w: fin(s.w), b: fin(s.b) };
   }, [game, infos]);
 
   const total = game ? game.fens.length : 0;
@@ -136,10 +153,20 @@ export function Analyzer() {
   if (game) for (let i = 0; i < game.moves.length; i += 2) rows.push(i);
 
   return (
+    <>
+    <div className="mx-auto w-full max-w-7xl px-4 pt-6">
+      <ImportPanel
+        onLoad={(t, src) => review(t, src)}
+        sample={SAMPLE}
+        error={error}
+        collapsed={!inputOpen}
+        onToggle={() => setInputOpen((o) => !o)}
+      />
+    </div>
     <div className="mx-auto grid w-full max-w-7xl gap-6 px-4 py-6 lg:grid-cols-[minmax(0,1fr)_420px]">
       {/* Board column */}
       <section className="flex flex-col gap-3">
-        <PlayerTag name={orientation === "white" ? h.Black : h.White} elo={orientation === "white" ? h.BlackElo : h.WhiteElo} color={orientation === "white" ? "b" : "w"} />
+        <PlayerTag name={orientation === "white" ? h.Black : h.White} elo={orientation === "white" ? h.BlackElo : h.WhiteElo} color={orientation === "white" ? "b" : "w"} avatar={orientation === "white" ? meta.blackAvatar : meta.whiteAvatar} platform={meta.platform} />
         <div className="flex gap-3">
           <div className="hidden lg:flex">
             <EvalBar score={cur?.score} orientation={orientation} />
@@ -157,7 +184,7 @@ export function Analyzer() {
             )}
           </div>
         </div>
-        <PlayerTag name={orientation === "white" ? h.White : h.Black} elo={orientation === "white" ? h.WhiteElo : h.BlackElo} color={orientation === "white" ? "w" : "b"} />
+        <PlayerTag name={orientation === "white" ? h.White : h.Black} elo={orientation === "white" ? h.WhiteElo : h.BlackElo} color={orientation === "white" ? "w" : "b"} avatar={orientation === "white" ? meta.whiteAvatar : meta.blackAvatar} platform={meta.platform} />
         <div className="lg:hidden">
           <EvalBar score={cur?.score} orientation={orientation} horizontal />
         </div>
@@ -187,42 +214,6 @@ export function Analyzer() {
 
       {/* Side panel */}
       <aside className="flex flex-col gap-4">
-        <Panel
-          title="PGN Input"
-          action={
-            game && (
-              <button className="text-xs text-muted-foreground hover:text-foreground" onClick={() => setInputOpen((o) => !o)}>
-                {inputOpen ? "Collapse" : "Expand"}
-              </button>
-            )
-          }
-        >
-          {inputOpen && (
-            <div className="flex flex-col gap-2">
-              <textarea
-                value={pgn}
-                onChange={(e) => setPgn(e.target.value)}
-                placeholder={'[Event "..."]\n1. e4 e5 2. Nf3 ...'}
-                className="h-40 w-full resize-y rounded-md border border-input bg-background p-3 font-mono text-xs outline-none focus:border-primary"
-              />
-              {error && <p className="rounded-md bg-destructive/15 px-3 py-2 text-sm text-destructive">{error}</p>}
-              <div className="flex gap-2">
-                <button onClick={() => review()} className="btn-primary flex-1">
-                  Review Game
-                </button>
-                <button
-                  onClick={() => {
-                    setPgn(SAMPLE);
-                    review(SAMPLE);
-                  }}
-                  className="btn-ghost"
-                >
-                  Try sample
-                </button>
-              </div>
-            </div>
-          )}
-        </Panel>
 
         {game && (
           <>
@@ -237,6 +228,35 @@ export function Analyzer() {
                 <div className="col-span-2">
                   <Meta k="Opening" v={h.Opening ?? h.Variant} />
                 </div>
+              </div>
+              <div className="mt-4 grid grid-cols-2 gap-3">
+                {(["w", "b"] as const).map((c) => {
+                  const p = summary[c].perf;
+                  const actual = c === "w" ? h.WhiteElo : h.BlackElo;
+                  const diff = p && actual && !isNaN(+actual) ? p.elo - +actual : null;
+                  return (
+                    <div key={c} className="perf-card">
+                      <div className="flex items-center justify-between text-[11px] uppercase tracking-wide text-muted-foreground">
+                        <span>{c === "w" ? "White" : "Black"} performance</span>
+                        {p && <span title="Estimate confidence">{p.confidence}</span>}
+                      </div>
+                      <div className="mt-1 flex items-baseline gap-2">
+                        <span className="font-display text-2xl font-bold text-primary">{p ? `~${p.elo}` : "…"}</span>
+                        {diff !== null && (
+                          <span className={`font-mono text-xs ${diff >= 0 ? "text-cls-best" : "text-cls-blunder"}`}>
+                            {diff >= 0 ? "+" : ""}
+                            {diff}
+                          </span>
+                        )}
+                      </div>
+                      <div className="text-xs text-muted-foreground">
+                        Actual: {actual && actual !== "?" ? actual : "—"}
+                        {summary[c].acpl !== null && ` · ACPL ${Math.round(summary[c].acpl!)}`}
+                      </div>
+                      {p && done >= total && <div className="mt-2 rounded bg-primary/10 px-2 py-1 text-[11px] text-primary">{p.note}</div>}
+                    </div>
+                  );
+                })}
               </div>
             </Panel>
 
@@ -331,6 +351,7 @@ export function Analyzer() {
         )}
       </aside>
     </div>
+    </>
   );
 }
 
@@ -355,12 +376,19 @@ function Meta({ k, v }: { k: string; v?: string }) {
   );
 }
 
-function PlayerTag({ name, elo, color }: { name?: string; elo?: string; color: "w" | "b" }) {
+function PlayerTag({ name, elo, color, avatar, platform }: { name?: string; elo?: string; color: "w" | "b"; avatar?: string; platform?: string }) {
   return (
     <div className="flex items-center gap-2 text-sm">
-      <span className={`h-4 w-4 rounded-sm ${color === "w" ? "bg-eval-white" : "border border-border bg-eval-black"}`} />
+      {avatar ? (
+        <img src={avatar} alt="" className="h-7 w-7 rounded-md object-cover" />
+      ) : (
+        <span className={`flex h-7 w-7 items-center justify-center rounded-md font-bold ${color === "w" ? "bg-eval-white text-eval-black" : "border border-border bg-eval-black text-eval-white"}`}>
+          {(name ?? "?")[0]?.toUpperCase()}
+        </span>
+      )}
       <span className="font-semibold">{name ?? (color === "w" ? "White" : "Black")}</span>
-      {elo && <span className="text-muted-foreground">({elo})</span>}
+      {elo && elo !== "?" && <span className="rounded bg-muted px-1.5 py-0.5 font-mono text-xs">{elo}</span>}
+      {platform && <span className="text-xs text-muted-foreground">{platform === "chesscom" ? "Chess.com" : "Lichess"}</span>}
     </div>
   );
 }
