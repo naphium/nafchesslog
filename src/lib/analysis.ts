@@ -5,19 +5,23 @@ export type Classification =
   | "brilliant"
   | "great"
   | "best"
+  | "excellent"
   | "good"
   | "inaccuracy"
   | "mistake"
+  | "miss"
   | "blunder";
 
 export const CLASS_META: Record<Classification, { label: string; symbol: string }> = {
-  brilliant: { label: "Sigma", symbol: "!!" },
-  great: { label: "Awesome", symbol: "!" },
+  brilliant: { label: "Brilliant", symbol: "!!" },
+  great: { label: "Great", symbol: "!" },
   best: { label: "Best", symbol: "★" },
+  excellent: { label: "Excellent", symbol: "👍" },
   good: { label: "Good", symbol: "✓" },
-  inaccuracy: { label: "Strange", symbol: "?!" },
-  mistake: { label: "Bad", symbol: "?" },
-  blunder: { label: "Clown", symbol: "??" },
+  inaccuracy: { label: "Inaccuracy", symbol: "?!" },
+  mistake: { label: "Mistake", symbol: "?" },
+  miss: { label: "Miss", symbol: "✕" },
+  blunder: { label: "Blunder", symbol: "??" },
 };
 
 export type ParsedGame = { headers: Record<string, string>; moves: Move[]; fens: string[] };
@@ -65,7 +69,7 @@ export function classifyMove(move: Move, before: PositionEval, after: PositionEv
   const isBest = before.lines[0]?.uci === uci;
 
   let cls: Classification;
-  if (isBest || loss <= 10) {
+  if (isBest || wl < 1) {
     cls = "best";
     const after = new Chess(move.after);
     const captured = move.captured ? VAL[move.captured] : 0;
@@ -76,9 +80,12 @@ export function classifyMove(move: Move, before: PositionEval, after: PositionEv
     const second = before.lines[1] ? cap(scoreToNum(before.lines[1].score) * sign) : null;
     if (sacrifice && loss <= 20 && a > -100) cls = "brilliant";
     else if (isBest && second !== null && b - second >= 150 && a > -200) cls = "great";
-  } else if (loss < 50) cls = "good";
-  else if (loss < 100) cls = "inaccuracy";
-  else if (loss < 200) cls = "mistake";
+  } else if (wl < 3) cls = "excellent";
+  else if (wl < 6) cls = "good";
+  else if (wl < 10) cls = "inaccuracy";
+  // Miss: a clearly winning chance was available but not taken, yet the position isn't lost
+  else if (b >= 200 && a > -100 && a < b - 150 && wl < 30) cls = "miss";
+  else if (wl < 20) cls = "mistake";
   else cls = "blunder";
   return { cls, loss, accuracy };
 }

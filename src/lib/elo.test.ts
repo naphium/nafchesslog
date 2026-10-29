@@ -13,7 +13,7 @@ describe("estimateElo", () => {
     expect(e.elo).toBeLessThan(1900);
     expect(e.confidence).toBe("low");
   });
-  it("maps 80% accuracy to 2000", () => {
-    expect(accuracyToElo(80)).toBe(2000);
+  it("maps 75% accuracy to 1900", () => {
+    expect(accuracyToElo(75)).toBe(1900);
   });
 });

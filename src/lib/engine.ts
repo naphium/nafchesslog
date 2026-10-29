@@ -93,10 +93,41 @@ export class Engine {
     return this.ready;
   }
 
-  async analyze(fen: string, depth = 11): Promise<PositionEval> {
+  private cloudMisses = 0;
+  resetCloud() {
+    this.cloudMisses = 0;
+  }
+
+  /** Deep (often depth 30+) evaluations from Lichess' shared cloud database. */
+  private async cloud(fen: string): Promise<PositionEval | null> {
+    if (this.cloudMisses >= 3) return null;
+    try {
+      const r = await fetch(`https://lichess.org/api/cloud-eval?fen=${encodeURIComponent(fen)}&multiPv=2`);
+      if (!r.ok) {
+        this.cloudMisses++;
+        return null;
+      }
+      const d = (await r.json()) as { pvs: { moves: string; cp?: number; mate?: number }[] };
+      this.cloudMisses = 0;
+      const lines: Line[] = d.pvs.map((pv) => {
+        const uciMoves = pv.moves.split(" ");
+        const sans = uciToSan(fen, uciMoves);
+        const score: Score = pv.mate !== undefined ? { cp: 0, mate: pv.mate } : { cp: pv.cp ?? 0 };
+        return { uci: uciMoves[0], san: sans[0] ?? uciMoves[0], score, pv: sans };
+      });
+      return lines.length ? { score: lines[0].score, lines } : null;
+    } catch {
+      this.cloudMisses++;
+      return null;
+    }
+  }
+
+  async analyze(fen: string, depth = 15): Promise<PositionEval> {
     const c = new Chess(fen);
     if (c.isCheckmate()) return { score: { cp: c.turn() === "w" ? -10000 : 10000 }, lines: [] };
     if (c.isGameOver()) return { score: { cp: 0 }, lines: [] };
+    const cloud = await this.cloud(fen);
+    if (cloud) return cloud;
     const ok = await this.ready;
     if (!ok || !this.worker) return mockEval(fen);
     const side = c.turn() === "w" ? 1 : -1;
@@ -124,7 +155,6 @@ export class Engine {
           resolve({ score: out[0]?.score ?? { cp: 0 }, lines: out });
         }
       };
-      w.postMessage("ucinewgame");
       w.postMessage(`position fen ${fen}`);
       w.postMessage(`go depth ${depth}`);
     });

@@ -17,18 +17,6 @@ type SideTab = "report" | "analysis" | "insights" | "settings";
 
 const Board = lazy(() => import("./Board"));
 
-const SAMPLE = `[Event "Casual Game"]
-[Site "London ENG"]
-[Date "1851.06.21"]
-[White "Adolf Anderssen"]
-[Black "Lionel Kieseritzky"]
-[Result "1-0"]
-[WhiteElo "2600"]
-[BlackElo "2500"]
-[TimeControl "-"]
-[Opening "King's Gambit Accepted: Bishop's Gambit"]
-
-1. e4 e5 2. f4 exf4 3. Bc4 Qh4+ 4. Kf1 b5 5. Bxb5 Nf6 6. Nf3 Qh6 7. d3 Nh5 8. Nh4 Qg5 9. Nf5 c6 10. g4 Nf6 11. Rg1 cxb5 12. h4 Qg6 13. h5 Qg5 14. Qf3 Ng8 15. Bxf4 Qf6 16. Nc3 Bc5 17. Nd5 Qxb2 18. Bd6 Bxg1 19. e5 Qxa1+ 20. Ke2 Na6 21. Nxg7+ Kd8 22. Qf6+ Nxf6 23. Be7# 1-0`;
 
 type MoveInfo = { cls: Classification; loss: number; accuracy: number };
 
@@ -53,7 +41,7 @@ export function Analyzer() {
   useEffect(() => {
     const e = new Engine();
     engineRef.current = e;
-    e.isReady().then((ok) => setEngineName(ok ? "Stockfish 10 (WASM/JS)" : "Fallback evaluator"));
+    e.isReady().then((ok) => setEngineName(ok ? "Stockfish 10 + Lichess cloud" : "Fallback evaluator"));
     return () => e.terminate();
   }, []);
 
@@ -80,8 +68,9 @@ export function Analyzer() {
     setInputOpen(false);
     const id = ++runId.current;
     const eng = engineRef.current!;
+    eng.resetCloud();
     for (let i = 0; i < g.fens.length; i++) {
-      const r = await eng.analyze(g.fens[i]);
+      const r = await eng.analyze(g.fens[i], 15);
       if (runId.current !== id) return;
       setEvals((prev) => {
         const n = [...prev];
@@ -269,7 +258,7 @@ export function Analyzer() {
   return (
     <>
       <div className="mx-auto w-full max-w-7xl px-3 pt-4 sm:px-4 sm:pt-6">
-        <ImportPanel onLoad={(t, src) => review(t, src)} sample={SAMPLE} error={error} collapsed={!inputOpen} onToggle={() => setInputOpen((o) => !o)} />
+        <ImportPanel onLoad={(t, src) => review(t, src)} error={error} collapsed={!inputOpen} onToggle={() => setInputOpen((o) => !o)} />
       </div>
       <div className="mx-auto grid w-full max-w-7xl gap-4 px-3 py-4 sm:px-4 lg:grid-cols-[minmax(0,1fr)_400px] lg:gap-6">
         {/* Board column */}

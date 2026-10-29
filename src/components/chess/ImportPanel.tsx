@@ -24,13 +24,11 @@ const RESULT_STYLE = { win: "bg-cls-best/20 text-cls-best", loss: "bg-cls-blunde
 
 export function ImportPanel({
   onLoad,
-  sample,
   error,
   collapsed,
   onToggle,
 }: {
   onLoad: (pgn: string, game?: GameSummary) => void;
-  sample: string;
   error: string | null;
   collapsed: boolean;
   onToggle: () => void;
@@ -106,9 +104,6 @@ export function ImportPanel({
               ↺ Last review
             </button>
           )}
-          <button className="btn-ghost h-9" onClick={() => onLoad(sample)}>
-            Try sample
-          </button>
           <button className="btn-ghost h-9 w-9 px-0" onClick={onToggle} title={collapsed ? "Expand" : "Collapse"}>
             {collapsed ? "▾" : "▴"}
           </button>
