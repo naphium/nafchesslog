@@ -5,6 +5,7 @@ const DOT: Partial<Record<Classification, string>> = {
   brilliant: "fill-cls-brilliant",
   great: "fill-cls-great",
   mistake: "fill-cls-mistake",
+  miss: "fill-cls-miss",
   blunder: "fill-cls-blunder",
 };
 
