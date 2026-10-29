@@ -3,13 +3,13 @@ import type { Classification } from "./analysis";
 // Accuracy -> rating anchor points (piecewise linear).
 const ANCHORS: [number, number][] = [
   [0, 400],
-  [45, 600],
-  [60, 1000],
-  [70, 1500],
-  [80, 2000],
-  [90, 2500],
-  [95, 2800],
-  [100, 3100],
+  [50, 700],
+  [65, 1300],
+  [75, 1900],
+  [82, 2300],
+  [88, 2650],
+  [93, 2900],
+  [100, 3200],
 ];
 
 export function accuracyToElo(acc: number): number {
@@ -42,12 +42,12 @@ export function estimateElo(input: {
   const inacc = counts.inaccuracy ?? 0;
 
   const accElo = accuracyToElo(accuracy);
-  const acplElo = Math.max(400, Math.min(3000, 3000 - 18 * Math.min(acpl, 140)));
+  const acplElo = Math.max(400, Math.min(3200, 3100 - 20 * Math.min(acpl, 130)));
   const ratioAdj = (top / n - 0.5) * 300 - (blunders / n) * 900 - (mistakes / n) * 250 - (inacc / n) * 100;
 
   const raw = 0.55 * accElo + 0.45 * acplElo + ratioAdj;
   const weight = Math.min(1, n / 25);
-  const elo = Math.round(Math.max(400, Math.min(3000, 1500 + (raw - 1500) * weight)) / 10) * 10;
+  const elo = Math.round(Math.max(400, Math.min(3200, 1500 + (raw - 1500) * weight)) / 10) * 10;
 
   let note: string;
   if (blunders === 0 && top / n >= 0.6) note = `Played like a ~${elo} in tactical accuracy`;
