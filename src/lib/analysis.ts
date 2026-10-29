@@ -86,6 +86,7 @@ export function classifyMove(move: Move, before: PositionEval, after: PositionEv
 export function formatScore(e: { cp: number; mate?: number } | undefined): string {
   if (!e) return "0.0";
   if (e.mate !== undefined) return `${e.mate < 0 ? "-" : ""}M${Math.abs(Math.round(e.mate))}`;
+  if (Math.abs(e.cp) >= 10000) return e.cp > 0 ? "1-0" : "0-1";
   const v = e.cp / 100;
   return `${v > 0 ? "+" : ""}${v.toFixed(1)}`;
 }

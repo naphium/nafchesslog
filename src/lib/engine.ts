@@ -95,7 +95,7 @@ export class Engine {
 
   async analyze(fen: string, depth = 11): Promise<PositionEval> {
     const c = new Chess(fen);
-    if (c.isCheckmate()) return { score: { cp: 0, mate: c.turn() === "w" ? -0 - 0.0001 : 0.0001 }, lines: [] };
+    if (c.isCheckmate()) return { score: { cp: c.turn() === "w" ? -10000 : 10000 }, lines: [] };
     if (c.isGameOver()) return { score: { cp: 0 }, lines: [] };
     const ok = await this.ready;
     if (!ok || !this.worker) return mockEval(fen);
