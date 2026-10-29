@@ -63,14 +63,14 @@
 
 :root, .dark {
   --radius: 0.625rem;
-  --background: oklch(0.17 0.02 260);
+  --background: oklch(0.14 0.012 265);
   --foreground: oklch(0.95 0.01 250);
-  --card: oklch(0.215 0.022 260);
+  --card: oklch(0.195 0.012 265);
   --card-foreground: oklch(0.95 0.01 250);
   --popover: oklch(0.24 0.022 260);
   --popover-foreground: oklch(0.95 0.01 250);
-  --primary: oklch(0.76 0.17 150);
-  --primary-foreground: oklch(0.18 0.03 150);
+  --primary: oklch(0.83 0.16 80);
+  --primary-foreground: oklch(0.2 0.04 70);
   --secondary: oklch(0.28 0.02 260);
   --secondary-foreground: oklch(0.95 0.01 250);
   --muted: oklch(0.28 0.02 260);
@@ -81,7 +81,7 @@
   --destructive-foreground: oklch(0.98 0 0);
   --border: oklch(0.32 0.02 260);
   --input: oklch(0.34 0.02 260);
-  --ring: oklch(0.76 0.17 150);
+  --ring: oklch(0.83 0.16 80);
   --chart-1: oklch(0.76 0.17 150); --chart-2: oklch(0.7 0.15 230); --chart-3: oklch(0.8 0.16 85); --chart-4: oklch(0.7 0.18 40); --chart-5: oklch(0.65 0.21 25);
   --sidebar: oklch(0.2 0.02 260); --sidebar-foreground: oklch(0.95 0.01 250); --sidebar-primary: oklch(0.76 0.17 150); --sidebar-primary-foreground: oklch(0.18 0.03 150); --sidebar-accent: oklch(0.28 0.02 260); --sidebar-accent-foreground: oklch(0.95 0.01 250); --sidebar-border: oklch(0.32 0.02 260); --sidebar-ring: oklch(0.76 0.17 150);
   --board-light: oklch(0.88 0.03 95);
@@ -152,4 +152,27 @@
 }
 @utility perf-card {
   @apply rounded-lg border border-border bg-background/50 p-3 animate-in fade-in duration-500;
+}
+
+@utility card-dash {
+  @apply rounded-2xl border border-border bg-card;
+}
+@utility player-bar {
+  @apply grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3 rounded-xl border border-border bg-card px-2.5 py-1.5;
+}
+@utility clock {
+  @apply shrink-0 rounded-lg bg-secondary px-2.5 py-1 font-mono text-sm font-bold tabular-nums text-muted-foreground sm:text-base;
+  &[data-active="true"] { @apply bg-eval-white text-eval-black; }
+}
+@utility move-chip {
+  @apply inline-flex shrink-0 items-center gap-1.5 rounded-lg px-2.5 py-1.5 font-mono text-sm transition-colors hover:bg-accent;
+  &[data-active="true"] { @apply bg-primary text-primary-foreground; }
+}
+@utility side-tab {
+  @apply flex flex-1 flex-col items-center gap-0.5 rounded-xl py-2 text-[11px] font-semibold text-muted-foreground transition-colors hover:text-foreground sm:flex-row sm:justify-center sm:gap-1.5 sm:text-sm;
+  &[data-active="true"] { @apply bg-secondary text-primary; }
+}
+@utility bubble {
+  @apply relative rounded-xl bg-eval-white px-3 py-2 text-sm text-eval-black;
+  &::before { content: ""; @apply absolute -left-1.5 top-4 h-3 w-3 rotate-45 bg-eval-white; }
 }
