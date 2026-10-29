@@ -11,7 +11,7 @@ import { fetchChessComAvatars, type GameSummary, type PlayerMeta } from "@/lib/i
 import { setLastPgn } from "@/lib/recent";
 import { estimateElo } from "@/lib/elo";
 import { EvalGraph } from "./EvalGraph";
-import coachAsset from "@/assets/coach-aevor.jpg.asset.json";
+import coachAsset from "@/assets/coach.png.asset.json";
 const coachImg = coachAsset.url;
 
 type SideTab = "report" | "analysis" | "insights" | "settings";
