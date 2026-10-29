@@ -11,13 +11,13 @@ export type Classification =
   | "blunder";
 
 export const CLASS_META: Record<Classification, { label: string; symbol: string }> = {
-  brilliant: { label: "Brilliant", symbol: "!!" },
-  great: { label: "Great", symbol: "!" },
+  brilliant: { label: "Sigma", symbol: "!!" },
+  great: { label: "Awesome", symbol: "!" },
   best: { label: "Best", symbol: "★" },
   good: { label: "Good", symbol: "✓" },
-  inaccuracy: { label: "Inaccuracy", symbol: "?!" },
-  mistake: { label: "Mistake", symbol: "?" },
-  blunder: { label: "Blunder", symbol: "??" },
+  inaccuracy: { label: "Strange", symbol: "?!" },
+  mistake: { label: "Bad", symbol: "?" },
+  blunder: { label: "Clown", symbol: "??" },
 };
 
 export type ParsedGame = { headers: Record<string, string>; moves: Move[]; fens: string[] };
