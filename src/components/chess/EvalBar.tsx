@@ -35,13 +35,13 @@ export function EvalBar({
     );
   }
   return (
-    <div className="relative w-7 shrink-0 self-stretch overflow-hidden rounded-md bg-eval-black">
+    <div className="relative w-4 shrink-0 sm:w-7 self-stretch overflow-hidden rounded-md bg-eval-black">
       <div
         className="absolute inset-x-0 bg-eval-white transition-all duration-500"
         style={{ height: `${white}%`, [flipped ? "top" : "bottom"]: 0 }}
       />
       <span
-        className={`absolute inset-x-0 text-center font-mono text-[10px] font-bold ${
+        className={`absolute inset-x-0 text-center font-mono text-[7px] sm:text-[10px] font-bold ${
           whiteLeads ? "text-eval-black" : "text-eval-white"
         }`}
         style={{ [whiteLeads !== flipped ? "bottom" : "top"]: 4 }}

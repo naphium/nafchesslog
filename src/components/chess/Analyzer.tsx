@@ -10,6 +10,10 @@ import { ImportPanel } from "./ImportPanel";
 import { fetchChessComAvatars, type GameSummary, type PlayerMeta } from "@/lib/importers";
 import { setLastPgn } from "@/lib/recent";
 import { estimateElo } from "@/lib/elo";
+import { EvalGraph } from "./EvalGraph";
+import coachImg from "@/assets/coach-frog.png";
+
+type SideTab = "report" | "analysis" | "insights" | "settings";
 
 const Board = lazy(() => import("./Board"));
 
@@ -38,6 +42,10 @@ export function Analyzer() {
   const [inputOpen, setInputOpen] = useState(true);
   const [engineName, setEngineName] = useState("Loading engine…");
   const [sound, setSound] = useState(true);
+  const [tab, setTab] = useState<SideTab>("report");
+  const [showHint, setShowHint] = useState(true);
+  const [copied, setCopied] = useState(false);
+  const [pgnText, setPgnText] = useState("");
   const engineRef = useRef<Engine | null>(null);
   const runId = useRef(0);
   const moveListRef = useRef<HTMLDivElement>(null);
@@ -60,6 +68,7 @@ export function Analyzer() {
     }
     setGame(g);
     setLastPgn(text);
+    setPgnText(text);
     setMeta({});
     const plat = source?.platform ?? (/chess\.com/i.test(g.headers.Site ?? "") ? "chesscom" : /lichess/i.test(g.headers.Site ?? "") ? "lichess" : undefined);
     if (plat === "chesscom" && g.headers.White && g.headers.Black)
@@ -128,7 +137,7 @@ export function Analyzer() {
 
   useEffect(() => {
     const h = (e: KeyboardEvent) => {
-      if ((e.target as HTMLElement)?.tagName === "TEXTAREA") return;
+      if (["TEXTAREA", "INPUT"].includes((e.target as HTMLElement)?.tagName)) return;
       const map: Record<string, number> = { ArrowLeft: ply - 1, ArrowRight: ply + 1, ArrowUp: 0, ArrowDown: 1e4 };
       if (e.key in map) {
         e.preventDefault();
@@ -140,255 +149,448 @@ export function Analyzer() {
   }, [goTo, ply]);
 
   useEffect(() => {
-    moveListRef.current?.querySelector('[data-active="true"]')?.scrollIntoView({ block: "nearest" });
+    moveListRef.current?.querySelector('[data-active="true"]')?.scrollIntoView({ block: "nearest", inline: "center" });
   }, [ply]);
 
   const fen = game ? game.fens[ply] : new Chess().fen();
   const last = game && ply > 0 ? game.moves[ply - 1] : undefined;
   const cur = evals[ply];
-  const hint = cur?.lines[0] ? { from: cur.lines[0].uci.slice(0, 2), to: cur.lines[0].uci.slice(2, 4) } : undefined;
+  const hint = showHint && cur?.lines[0] ? { from: cur.lines[0].uci.slice(0, 2), to: cur.lines[0].uci.slice(2, 4) } : undefined;
   const h = game?.headers ?? {};
-
+  const analyzed = !!game && done >= total;
   const rows: number[] = [];
   if (game) for (let i = 0; i < game.moves.length; i += 2) rows.push(i);
 
+  // Clocks parsed from [%clk] comments (display only)
+  const clocks = useMemo(() => {
+    if (!game) return null;
+    const byFen = new Map<string, number>();
+    try {
+      const c = new Chess();
+      c.loadPgn(pgnText);
+      for (const { fen: f, comment } of c.getComments()) {
+        const m = /\[%clk\s+(\d+):(\d+):(\d+(?:\.\d+)?)\]/.exec(comment ?? "");
+        if (m) byFen.set(f, +m[1] * 3600 + +m[2] * 60 + +m[3]);
+      }
+    } catch {
+      /* ignore */
+    }
+    const base = Number((h.TimeControl ?? "").split("+")[0]) || null;
+    const perPly = game.moves.map((_, i) => byFen.get(game.fens[i + 1]) ?? null);
+    return { base, perPly, any: byFen.size > 0 };
+  }, [game, pgnText, h.TimeControl]);
+
+  const clockFor = (color: "w" | "b") => {
+    if (!clocks || (!clocks.any && !clocks.base)) return "--:--";
+    let t: number | null = clocks.base;
+    for (let i = 0; i < ply; i++) if (game!.moves[i].color === color && clocks.perPly[i] !== null) t = clocks.perPly[i];
+    if (t === null) return "--:--";
+    const hh = Math.floor(t / 3600);
+    const mm = Math.floor((t % 3600) / 60);
+    const ss = Math.floor(t % 60);
+    return `${hh ? `${hh}:` : ""}${hh ? String(mm).padStart(2, "0") : mm}:${String(ss).padStart(2, "0")}`;
+  };
+  const turn = new Chess(fen).turn();
+
+  // Game phases (display grouping only)
+  const phases = useMemo(() => {
+    if (!game) return null;
+    const val: Record<string, number> = { n: 3, b: 3, r: 5, q: 9 };
+    const res = { Opening: { w: [] as number[], b: [] as number[] }, Middlegame: { w: [] as number[], b: [] as number[] }, Endgame: { w: [] as number[], b: [] as number[] } };
+    let endgame = false;
+    game.moves.forEach((m, i) => {
+      if (!endgame) {
+        let mat = 0;
+        for (const row of new Chess(m.before).board()) for (const p of row) if (p && val[p.type]) mat += val[p.type];
+        endgame = mat <= 26;
+      }
+      const ph = endgame ? "Endgame" : i < 20 ? "Opening" : "Middlegame";
+      if (infos[i]) res[ph][m.color].push(infos[i]!.accuracy);
+    });
+    return res;
+  }, [game, infos]);
+  const phaseCls = (a: number[]): Classification | null => {
+    if (!a.length) return null;
+    const v = a.reduce((x, y) => x + y, 0) / a.length;
+    return v >= 90 ? "best" : v >= 80 ? "good" : v >= 65 ? "inaccuracy" : v >= 50 ? "mistake" : "blunder";
+  };
+
+  // Coach message
+  const coach = useMemo(() => {
+    if (!game) return { text: "Hi! Import a game and I'll walk you through the key moments.", ply: null as number | null };
+    if (ply > 0 && infos[ply - 1]) {
+      const m = game.moves[ply - 1];
+      const inf = infos[ply - 1]!;
+      const best = evals[ply - 1]?.lines[0];
+      const lbl = CLASS_META[inf.cls].label;
+      const alt = best && best.san !== m.san && !["best", "brilliant", "great"].includes(inf.cls) ? ` The engine preferred ${best.san}.` : "";
+      return { text: `${m.san} is ${/^[AEIOU]/.test(lbl) ? "an" : "a"} ${lbl} move.${alt}`, ply };
+    }
+    if (!analyzed) return { text: "Give me a moment, I'm analyzing every move…", ply: null };
+    const order: Classification[] = ["brilliant", "great", "blunder"];
+    for (const c of order) {
+      const i = infos.findIndex((x) => x?.cls === c);
+      if (i >= 0) {
+        const who = game.moves[i].color === "w" ? h.White ?? "White" : h.Black ?? "Black";
+        return { text: `${who} played ${c === "blunder" ? "a Clown" : `${/^[AEIOU]/.test(CLASS_META[c].label) ? "an" : "a"} ${CLASS_META[c].label}`} move on move ${Math.floor(i / 2) + 1}: ${game.moves[i].san}`, ply: i + 1 };
+      }
+    }
+    return { text: "A clean game! Step through the moves to see each rating.", ply: null };
+  }, [game, ply, infos, evals, analyzed, h.White, h.Black]);
+
+  const share = async () => {
+    const p = coach.ply ?? ply;
+    const m = game && p > 0 ? game.moves[p - 1] : null;
+    const text = m ? `${Math.floor((p - 1) / 2) + 1}${m.color === "w" ? "." : "..."} ${m.san} — ${coach.text}\nFEN: ${game!.fens[p]}\nReviewed on NafChessLog` : fen;
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1800);
+    } catch {
+      /* ignore */
+    }
+  };
+
+  const topColor = orientation === "white" ? "b" : "w";
+  const botColor = orientation === "white" ? "w" : "b";
+  const player = (c: "w" | "b") => ({
+    name: c === "w" ? h.White : h.Black,
+    elo: c === "w" ? h.WhiteElo : h.BlackElo,
+    avatar: c === "w" ? meta.whiteAvatar : meta.blackAvatar,
+  });
+
+  const TABS: { id: SideTab; label: string; icon: string }[] = [
+    { id: "report", label: "Report", icon: "★" },
+    { id: "analysis", label: "Analysis", icon: "⚡" },
+    { id: "insights", label: "Insights", icon: "◎" },
+    { id: "settings", label: "Settings", icon: "⚙" },
+  ];
+
   return (
     <>
-    <div className="mx-auto w-full max-w-7xl px-4 pt-6">
-      <ImportPanel
-        onLoad={(t, src) => review(t, src)}
-        sample={SAMPLE}
-        error={error}
-        collapsed={!inputOpen}
-        onToggle={() => setInputOpen((o) => !o)}
-      />
-    </div>
-    <div className="mx-auto grid w-full max-w-7xl gap-6 px-4 py-6 lg:grid-cols-[minmax(0,1fr)_420px]">
-      {/* Board column */}
-      <section className="flex flex-col gap-3">
-        <PlayerTag name={orientation === "white" ? h.Black : h.White} elo={orientation === "white" ? h.BlackElo : h.WhiteElo} color={orientation === "white" ? "b" : "w"} avatar={orientation === "white" ? meta.blackAvatar : meta.whiteAvatar} platform={meta.platform} />
-        <div className="flex gap-3">
-          <div className="hidden lg:flex">
+      <div className="mx-auto w-full max-w-7xl px-3 pt-4 sm:px-4 sm:pt-6">
+        <ImportPanel onLoad={(t, src) => review(t, src)} sample={SAMPLE} error={error} collapsed={!inputOpen} onToggle={() => setInputOpen((o) => !o)} />
+      </div>
+      <div className="mx-auto grid w-full max-w-7xl gap-4 px-3 py-4 sm:px-4 lg:grid-cols-[minmax(0,1fr)_400px] lg:gap-6">
+        {/* Board column */}
+        <section className="mx-auto flex w-full min-w-0 max-w-[min(100%,calc(100vh-140px))] flex-col gap-2 lg:max-w-[min(100%,calc(100vh-120px))]">
+          <PlayerBar {...player(topColor)} color={topColor} clock={clockFor(topColor)} active={!!game && turn === topColor} />
+          <div className="flex gap-1.5 sm:gap-2">
             <EvalBar score={cur?.score} orientation={orientation} />
+            <div className="relative min-w-0 flex-1">
+              <ClientOnly fallback={<div className="aspect-square w-full rounded-md bg-card" />}>
+                <Suspense fallback={<div className="aspect-square w-full rounded-md bg-card" />}>
+                  <Board fen={fen} orientation={orientation} lastMove={last} hint={hint} />
+                </Suspense>
+              </ClientOnly>
+              {last && infos[ply - 1] && (
+                <div className="pointer-events-none absolute right-1.5 top-1.5 rounded-full bg-popover/90 px-2.5 py-1 shadow-lg animate-in fade-in zoom-in-90">
+                  <ClassBadge cls={infos[ply - 1]!.cls} withLabel />
+                </div>
+              )}
+            </div>
           </div>
-          <div className="relative w-full max-w-[720px]">
-            <ClientOnly fallback={<div className="aspect-square w-full rounded-md bg-card" />}>
-              <Suspense fallback={<div className="aspect-square w-full rounded-md bg-card" />}>
-                <Board fen={fen} orientation={orientation} lastMove={last} hint={hint} />
-              </Suspense>
-            </ClientOnly>
-            {last && infos[ply - 1] && (
-              <div className="pointer-events-none absolute right-2 top-2 rounded-full bg-popover/90 px-3 py-1 shadow-lg">
-                <ClassBadge cls={infos[ply - 1]!.cls} withLabel />
-              </div>
-            )}
-          </div>
-        </div>
-        <PlayerTag name={orientation === "white" ? h.White : h.Black} elo={orientation === "white" ? h.WhiteElo : h.BlackElo} color={orientation === "white" ? "w" : "b"} avatar={orientation === "white" ? meta.whiteAvatar : meta.blackAvatar} platform={meta.platform} />
-        <div className="lg:hidden">
-          <EvalBar score={cur?.score} orientation={orientation} horizontal />
-        </div>
-        <div className="flex max-w-[760px] items-center justify-between gap-2">
-          <div className="flex gap-1.5">
-            {[
-              ["|<", 0, "Start (↑)"],
-              ["<", ply - 1, "Previous (←)"],
-              [">", ply + 1, "Next (→)"],
-              [">|", 1e4, "End (↓)"],
-            ].map(([l, p, t]) => (
-              <button key={l as string} title={t as string} onClick={() => goTo(p as number)} disabled={!game} className="btn-nav">
-                {l}
-              </button>
-            ))}
-          </div>
-          <div className="flex gap-1.5">
-            <button onClick={() => setSound((s) => !s)} className="btn-ghost" title="Toggle sound">
-              {sound ? "🔊" : "🔇"}
+          <PlayerBar {...player(botColor)} color={botColor} clock={clockFor(botColor)} active={!!game && turn === botColor} />
+
+          {/* Move strip */}
+          <div className="card-dash flex items-center gap-1 p-1.5">
+            <button className="btn-nav h-9 min-w-9 shrink-0 px-0" onClick={() => goTo(ply - 1)} disabled={!game} aria-label="Previous move">
+              ‹
             </button>
-            <button onClick={() => setOrientation((o) => (o === "white" ? "black" : "white"))} className="btn-ghost">
+            <div ref={moveListRef} className="flex min-w-0 flex-1 gap-1 overflow-x-auto scroll-smooth [scrollbar-width:none]">
+              {!game && <span className="px-2 py-1.5 text-sm text-muted-foreground">Moves will appear here</span>}
+              {game?.moves.map((m, i) => (
+                <button key={i} data-active={ply === i + 1} onClick={() => goTo(i + 1)} className="move-chip">
+                  {m.color === "w" && <span className="text-xs opacity-60">{i / 2 + 1}.</span>}
+                  {infos[i] && <ClassBadge cls={infos[i]!.cls} />}
+                  {m.san}
+                </button>
+              ))}
+            </div>
+            <button className="btn-nav h-9 min-w-9 shrink-0 px-0" onClick={() => goTo(ply + 1)} disabled={!game} aria-label="Next move">
+              ›
+            </button>
+          </div>
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex gap-1">
+              <button className="btn-ghost h-9 px-3" onClick={() => goTo(0)} disabled={!game} title="Start (↑)">
+                |‹
+              </button>
+              <button className="btn-ghost h-9 px-3" onClick={() => goTo(1e4)} disabled={!game} title="End (↓)">
+                ›|
+              </button>
+            </div>
+            <button onClick={() => setOrientation((o) => (o === "white" ? "black" : "white"))} className="btn-ghost h-9">
               ⇅ Flip
             </button>
           </div>
-        </div>
-      </section>
+        </section>
 
-      {/* Side panel */}
-      <aside className="flex flex-col gap-4">
+        {/* Sidebar */}
+        <aside className="card-dash flex min-w-0 flex-col gap-4 self-start p-3 sm:p-4">
+          <div className="flex gap-1 rounded-2xl bg-background/60 p-1">
+            {TABS.map((t) => (
+              <button key={t.id} data-active={tab === t.id} onClick={() => setTab(t.id)} className="side-tab">
+                <span className="text-base leading-none">{t.icon}</span>
+                {t.label}
+              </button>
+            ))}
+          </div>
 
-        {game && (
-          <>
-            <Panel title={h.Event && h.Event !== "?" ? h.Event : "Game"}>
-              <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-sm">
-                <Meta k="White" v={`${h.White ?? "?"}${h.WhiteElo ? ` (${h.WhiteElo})` : ""}`} />
-                <Meta k="Black" v={`${h.Black ?? "?"}${h.BlackElo ? ` (${h.BlackElo})` : ""}`} />
-                <Meta k="Result" v={h.Result} />
-                <Meta k="Date" v={h.Date} />
-                <Meta k="Time control" v={h.TimeControl} />
-                <Meta k="ECO" v={h.ECO} />
-                <div className="col-span-2">
-                  <Meta k="Opening" v={h.Opening ?? h.Variant} />
+          {tab === "report" && (
+            <div className="flex flex-col gap-4 animate-in fade-in duration-300">
+              {/* Coach */}
+              <div className="flex gap-3">
+                <img src={coachImg} alt="Coach frog" width={64} height={64} className="h-14 w-14 shrink-0 sm:h-16 sm:w-16" />
+                <div className="min-w-0 flex-1">
+                  <div className="bubble">{coach.text}</div>
+                  {game && (
+                    <div className="mt-2 flex gap-2">
+                      {coach.ply !== null && coach.ply !== ply && (
+                        <button className="btn-ghost h-8 text-xs" onClick={() => goTo(coach.ply!)}>
+                          Show me
+                        </button>
+                      )}
+                      <button className="btn-primary h-8 text-xs" onClick={share}>
+                        {copied ? "Copied!" : "Share the move"}
+                      </button>
+                    </div>
+                  )}
                 </div>
               </div>
-              <div className="mt-4 grid grid-cols-2 gap-3">
-                {(["w", "b"] as const).map((c) => {
-                  const p = summary[c].perf;
-                  const actual = c === "w" ? h.WhiteElo : h.BlackElo;
-                  const diff = p && actual && !isNaN(+actual) ? p.elo - +actual : null;
-                  return (
-                    <div key={c} className="perf-card">
-                      <div className="flex items-center justify-between text-[11px] uppercase tracking-wide text-muted-foreground">
-                        <span>{c === "w" ? "White" : "Black"} performance</span>
-                        {p && <span title="Estimate confidence">{p.confidence}</span>}
-                      </div>
-                      <div className="mt-1 flex items-baseline gap-2">
-                        <span className="font-display text-2xl font-bold text-primary">{p && done >= total ? `~${p.elo}` : "…"}</span>
-                        {diff !== null && done >= total && (
-                          <span className={`font-mono text-xs ${diff >= 0 ? "text-cls-best" : "text-cls-blunder"}`}>
-                            {diff >= 0 ? "+" : ""}
-                            {diff}
-                          </span>
-                        )}
-                      </div>
-                      <div className="text-xs text-muted-foreground">
-                        Actual: {actual && actual !== "?" ? actual : "—"}
-                        {summary[c].acpl !== null && ` · ACPL ${Math.round(summary[c].acpl!)}`}
-                      </div>
-                      {p && done >= total && <div className="mt-2 rounded bg-primary/10 px-2 py-1 text-[11px] text-primary">{p.note}</div>}
-                    </div>
-                  );
-                })}
-              </div>
-            </Panel>
 
-            <Panel title="Accuracy" action={<span className="text-xs text-muted-foreground">{engineName}</span>}>
-              {done < total && (
-                <div className="mb-3">
-                  <div className="mb-1 flex justify-between text-xs text-muted-foreground">
-                    <span>Analyzing…</span>
-                    <span>
-                      {done}/{total}
-                    </span>
-                  </div>
-                  <div className="h-1.5 overflow-hidden rounded-full bg-muted">
-                    <div className="h-full bg-primary transition-all" style={{ width: `${(done / total) * 100}%` }} />
-                  </div>
-                </div>
-              )}
-              <div className="grid grid-cols-2 gap-3">
-                {(["w", "b"] as const).map((c) => (
-                  <div key={c} className="rounded-lg border border-border bg-background/50 p-3">
-                    <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                      <span className={`h-3 w-3 rounded-sm ${c === "w" ? "bg-eval-white" : "border border-border bg-eval-black"}`} />
-                      {c === "w" ? "White" : "Black"}
+              {game ? (
+                <>
+                  {!analyzed && (
+                    <div>
+                      <div className="mb-1 flex justify-between text-xs text-muted-foreground">
+                        <span>Analyzing with {engineName}</span>
+                        <span>
+                          {done}/{total}
+                        </span>
+                      </div>
+                      <div className="h-1.5 overflow-hidden rounded-full bg-muted">
+                        <div className="h-full bg-primary transition-all" style={{ width: `${(done / total) * 100}%` }} />
+                      </div>
                     </div>
-                    <div className="font-display text-3xl font-bold">
-                      {summary[c].avg === null ? "–" : `${summary[c].avg.toFixed(1)}%`}
+                  )}
+                  <EvalGraph evals={evals.length ? game.fens.map((_, i) => evals[i]) : []} classes={infos.map((x) => x?.cls)} ply={ply} onSelect={goTo} />
+
+                  {/* Breakdown table */}
+                  <div className="overflow-hidden rounded-xl border border-border">
+                    <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-2 bg-background/50 px-3 py-2 text-sm">
+                      <span className="truncate font-semibold">{h.White ?? "White"}</span>
+                      <span />
+                      <span className="truncate text-right font-semibold">{h.Black ?? "Black"}</span>
                     </div>
-                    <div className="mt-2 space-y-1">
-                      {(Object.keys(CLASS_META) as Classification[]).map((k) => (
-                        <div key={k} className="flex items-center justify-between text-xs">
+                    <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-2 px-3 py-2.5">
+                      <span className="w-fit rounded-lg bg-eval-white px-2.5 py-1 font-display text-lg font-bold text-eval-black">{summary.w.avg?.toFixed(1) ?? "–"}</span>
+                      <span className="text-xs text-muted-foreground">Accuracy</span>
+                      <span className="ml-auto w-fit rounded-lg border border-border bg-eval-black px-2.5 py-1 font-display text-lg font-bold">{summary.b.avg?.toFixed(1) ?? "–"}</span>
+                    </div>
+                    {(Object.keys(CLASS_META) as Classification[]).map((k) => (
+                      <div key={k} className="grid grid-cols-[1fr_auto_1fr] items-center gap-2 border-t border-border/60 px-3 py-1.5 text-sm">
+                        <span className="font-mono">{summary.w.counts[k] ?? 0}</span>
+                        <span className="flex w-28 justify-center">
                           <ClassBadge cls={k} withLabel />
-                          <span className="font-mono">{summary[c].counts[k] ?? 0}</span>
-                        </div>
+                        </span>
+                        <span className="text-right font-mono">{summary.b.counts[k] ?? 0}</span>
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Game rating */}
+                  <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-2">
+                    <RatingCard elo={analyzed ? summary.w.perf?.elo : undefined} actual={h.WhiteElo} light />
+                    <span className="text-center text-xs text-muted-foreground">Game
+                      <br />
+                      rating
+                    </span>
+                    <RatingCard elo={analyzed ? summary.b.perf?.elo : undefined} actual={h.BlackElo} />
+                  </div>
+                  {analyzed && (summary.w.perf || summary.b.perf) && (
+                    <div className="flex flex-wrap gap-1.5">
+                      {[summary.w.perf, summary.b.perf].map((p, i) => p && (
+                        <span key={i} className="rounded-full bg-primary/15 px-2.5 py-1 text-[11px] text-primary">
+                          {i ? "Black" : "White"}: {p.note}
+                        </span>
                       ))}
                     </div>
+                  )}
+
+                  {/* Phases */}
+                  <div className="overflow-hidden rounded-xl border border-border">
+                    {phases &&
+                      (["Opening", "Middlegame", "Endgame"] as const).map((ph, i) => {
+                        const wc = phaseCls(phases[ph].w);
+                        const bc = phaseCls(phases[ph].b);
+                        return (
+                          <div key={ph} className={`grid grid-cols-[1fr_auto_1fr] items-center px-3 py-2 text-sm ${i ? "border-t border-border/60" : ""}`}>
+                            <span>{wc ? <ClassBadge cls={wc} /> : <span className="text-muted-foreground">–</span>}</span>
+                            <span className="w-28 text-center text-muted-foreground">{ph}</span>
+                            <span className="text-right">{bc ? <ClassBadge cls={bc} /> : <span className="text-muted-foreground">–</span>}</span>
+                          </div>
+                        );
+                      })}
                   </div>
-                ))}
-              </div>
-            </Panel>
-
-            <Panel title="Engine Lines" action={<span className="font-mono text-xs text-primary">{formatScore(cur?.score)}</span>}>
-              {!cur ? (
-                <p className="text-sm text-muted-foreground">Calculating…</p>
-              ) : cur.lines.length === 0 ? (
-                <p className="text-sm text-muted-foreground">Game over.</p>
+                </>
               ) : (
-                <div className="space-y-2">
-                  {cur.lines.map((l, i) => (
-                    <div key={i} className="flex items-start gap-3 rounded-md bg-background/50 p-2">
-                      <span className="w-12 shrink-0 rounded bg-muted px-1.5 py-0.5 text-center font-mono text-xs font-bold">
-                        {formatScore(l.score)}
-                      </span>
-                      <span className="font-mono text-xs leading-5 text-muted-foreground">
-                        <span className="font-bold text-foreground">{l.pv[0]}</span> {l.pv.slice(1).join(" ")}
-                      </span>
-                    </div>
-                  ))}
-                </div>
+                <p className="text-sm text-muted-foreground">Search a username or paste a PGN above to get your game report.</p>
               )}
-            </Panel>
+            </div>
+          )}
 
-            <Panel title="Moves">
-              <div ref={moveListRef} className="max-h-80 overflow-y-auto pr-1">
-                <table className="w-full font-mono text-sm">
-                  <tbody>
-                    {rows.map((i) => (
-                      <tr key={i} className="odd:bg-background/40">
-                        <td className="w-10 py-1 pl-2 text-muted-foreground">{i / 2 + 1}.</td>
-                        {[i, i + 1].map((j) =>
-                          game.moves[j] ? (
-                            <td key={j} className="w-1/2">
-                              <button
-                                data-active={ply === j + 1}
-                                onClick={() => goTo(j + 1)}
-                                className="move-cell"
-                              >
-                                <span>{game.moves[j].san}</span>
-                                {infos[j] && <ClassBadge cls={infos[j]!.cls} />}
-                              </button>
-                            </td>
-                          ) : (
-                            <td key={j} />
-                          ),
-                        )}
-                      </tr>
+          {tab === "analysis" && (
+            <div className="flex flex-col gap-4 animate-in fade-in duration-300">
+              <div>
+                <div className="mb-2 flex items-center justify-between text-xs uppercase tracking-wider text-muted-foreground">
+                  <span>Engine lines</span>
+                  <span className="font-mono text-primary">{formatScore(cur?.score)}</span>
+                </div>
+                {!game ? (
+                  <p className="text-sm text-muted-foreground">No game loaded.</p>
+                ) : !cur ? (
+                  <p className="text-sm text-muted-foreground">Calculating…</p>
+                ) : cur.lines.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">Game over.</p>
+                ) : (
+                  <div className="space-y-2">
+                    {cur.lines.map((l, i) => (
+                      <div key={i} className="flex items-start gap-3 rounded-lg bg-background/50 p-2">
+                        <span className="w-12 shrink-0 rounded bg-muted px-1.5 py-0.5 text-center font-mono text-xs font-bold">{formatScore(l.score)}</span>
+                        <span className="min-w-0 font-mono text-xs leading-5 text-muted-foreground">
+                          <span className="font-bold text-foreground">{l.pv[0]}</span> {l.pv.slice(1).join(" ")}
+                        </span>
+                      </div>
                     ))}
-                  </tbody>
-                </table>
+                  </div>
+                )}
               </div>
-            </Panel>
-          </>
-        )}
-      </aside>
-    </div>
+              {game && (
+                <>
+                  <div className="max-h-80 overflow-y-auto rounded-xl border border-border">
+                    <table className="w-full font-mono text-sm">
+                      <tbody>
+                        {rows.map((i) => (
+                          <tr key={i} className="odd:bg-background/40">
+                            <td className="w-10 py-1 pl-2 text-muted-foreground">{i / 2 + 1}.</td>
+                            {[i, i + 1].map((j) =>
+                              game.moves[j] ? (
+                                <td key={j} className="w-1/2">
+                                  <button data-active={ply === j + 1} onClick={() => goTo(j + 1)} className="move-cell">
+                                    <span>{game.moves[j].san}</span>
+                                    {infos[j] && <ClassBadge cls={infos[j]!.cls} />}
+                                  </button>
+                                </td>
+                              ) : (
+                                <td key={j} />
+                              ),
+                            )}
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                  <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
+                    <Meta k="Event" v={h.Event} />
+                    <Meta k="Date" v={h.Date} />
+                    <Meta k="Result" v={h.Result} />
+                    <Meta k="Time control" v={h.TimeControl} />
+                    <div className="col-span-2">
+                      <Meta k="Opening" v={h.Opening ?? h.ECO} />
+                    </div>
+                  </div>
+                </>
+              )}
+            </div>
+          )}
+
+          {tab === "insights" && (
+            <div className="flex flex-col gap-2 animate-in fade-in duration-300">
+              <p className="text-xs uppercase tracking-wider text-muted-foreground">Key moments</p>
+              {!game || !infos.some((x) => x && ["brilliant", "great", "mistake", "blunder"].includes(x.cls)) ? (
+                <p className="text-sm text-muted-foreground">{game ? "No key moments yet." : "No game loaded."}</p>
+              ) : (
+                infos.map((x, i) =>
+                  x && ["brilliant", "great", "mistake", "blunder"].includes(x.cls) ? (
+                    <button key={i} onClick={() => goTo(i + 1)} data-active={ply === i + 1} className="game-row data-[active=true]:bg-secondary">
+                      <ClassBadge cls={x.cls} />
+                      <span className="font-mono">
+                        {Math.floor(i / 2) + 1}
+                        {game.moves[i].color === "w" ? "." : "…"} {game.moves[i].san}
+                      </span>
+                      <span className="min-w-0 flex-1 truncate text-right text-xs text-muted-foreground">
+                        {CLASS_META[x.cls].label}
+                        {evals[i]?.lines[0] && !["brilliant", "great"].includes(x.cls) ? ` · best ${evals[i]!.lines[0].san}` : ""}
+                      </span>
+                    </button>
+                  ) : null,
+                )
+              )}
+            </div>
+          )}
+
+          {tab === "settings" && (
+            <div className="flex flex-col gap-2 text-sm animate-in fade-in duration-300">
+              <Toggle label="Move sounds" on={sound} set={setSound} />
+              <Toggle label="Show best-move arrow" on={showHint} set={setShowHint} />
+              <Toggle label="View as Black" on={orientation === "black"} set={(v) => setOrientation(v ? "black" : "white")} />
+              <p className="pt-2 text-xs text-muted-foreground">Engine: {engineName}</p>
+              <p className="text-xs text-muted-foreground">Keys: ← → step, ↑ start, ↓ end</p>
+            </div>
+          )}
+        </aside>
+      </div>
     </>
   );
 }
 
-function Panel({ title, action, children }: { title: string; action?: React.ReactNode; children: React.ReactNode }) {
+function Toggle({ label, on, set }: { label: string; on: boolean; set: (v: boolean) => void }) {
   return (
-    <div className="rounded-xl border border-border bg-card p-4">
-      <div className="mb-3 flex items-center justify-between">
-        <h2 className="font-display text-sm font-semibold uppercase tracking-wider text-muted-foreground">{title}</h2>
-        {action}
-      </div>
-      {children}
+    <button onClick={() => set(!on)} className="flex items-center justify-between rounded-lg bg-background/50 px-3 py-2.5">
+      <span>{label}</span>
+      <span data-on={on} className="relative h-5 w-9 rounded-full bg-muted transition-colors data-[on=true]:bg-primary">
+        <span data-on={on} className="absolute left-0.5 top-0.5 h-4 w-4 rounded-full bg-foreground transition-transform data-[on=true]:translate-x-4" />
+      </span>
+    </button>
+  );
+}
+
+function RatingCard({ elo, actual, light }: { elo?: number; actual?: string; light?: boolean }) {
+  return (
+    <div className={`rounded-xl px-3 py-2 ${light ? "bg-eval-white text-eval-black" : "border border-border bg-eval-black"}`}>
+      <div className="font-display text-2xl font-bold">{elo ?? "…"}</div>
+      <div className="text-[11px] opacity-70">Actual {actual && actual !== "?" ? actual : "—"}</div>
     </div>
   );
 }
 
 function Meta({ k, v }: { k: string; v?: string }) {
   return (
-    <div>
+    <div className="min-w-0">
       <div className="text-[11px] uppercase tracking-wide text-muted-foreground">{k}</div>
       <div className="truncate font-medium">{v && v !== "?" ? v : "—"}</div>
     </div>
   );
 }
 
-function PlayerTag({ name, elo, color, avatar, platform }: { name?: string; elo?: string; color: "w" | "b"; avatar?: string; platform?: string }) {
+function PlayerBar({ name, elo, color, avatar, clock, active }: { name?: string; elo?: string; color: "w" | "b"; avatar?: string; clock: string; active: boolean }) {
   return (
-    <div className="flex items-center gap-2 text-sm">
-      {avatar ? (
-        <img src={avatar} alt="" className="h-7 w-7 rounded-md object-cover" />
-      ) : (
-        <span className={`flex h-7 w-7 items-center justify-center rounded-md font-bold ${color === "w" ? "bg-eval-white text-eval-black" : "border border-border bg-eval-black text-eval-white"}`}>
-          {(name ?? "?")[0]?.toUpperCase()}
-        </span>
-      )}
-      <span className="font-semibold">{name ?? (color === "w" ? "White" : "Black")}</span>
-      {elo && elo !== "?" && <span className="rounded bg-muted px-1.5 py-0.5 font-mono text-xs">{elo}</span>}
-      {platform && <span className="text-xs text-muted-foreground">{platform === "chesscom" ? "Chess.com" : "Lichess"}</span>}
+    <div className="player-bar">
+      <div className="flex min-w-0 items-center gap-2">
+        {avatar ? (
+          <img src={avatar} alt="" className="h-8 w-8 shrink-0 rounded-lg object-cover" />
+        ) : (
+          <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg font-bold ${color === "w" ? "bg-eval-white text-eval-black" : "border border-border bg-eval-black text-eval-white"}`}>
+            {(name ?? (color === "w" ? "W" : "B"))[0]?.toUpperCase()}
+          </span>
+        )}
+        <span className="truncate text-sm font-semibold">{name ?? (color === "w" ? "White" : "Black")}</span>
+        {elo && elo !== "?" && <span className="shrink-0 rounded-md bg-muted px-1.5 py-0.5 font-mono text-xs">{elo}</span>}
+      </div>
+      <span className="clock" data-active={active}>
+        {clock}
+      </span>
     </div>
   );
 }
