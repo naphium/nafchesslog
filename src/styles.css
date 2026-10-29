@@ -139,3 +139,17 @@
     font-family: var(--font-sans);
   }
 }
+
+@utility tab-btn {
+  @apply inline-flex h-8 items-center gap-1.5 rounded-md px-3 text-sm text-muted-foreground transition-colors hover:text-foreground;
+  &[data-active="true"] { @apply bg-secondary text-foreground; }
+}
+@utility chip {
+  @apply rounded-full border border-border px-2.5 py-0.5 text-xs text-muted-foreground transition-colors hover:border-primary hover:text-primary;
+}
+@utility game-row {
+  @apply flex w-full items-center gap-3 rounded-md bg-background/50 px-3 py-2 text-left text-sm transition-colors hover:bg-accent;
+}
+@utility perf-card {
+  @apply rounded-lg border border-border bg-background/50 p-3 animate-in fade-in duration-500;
+}
